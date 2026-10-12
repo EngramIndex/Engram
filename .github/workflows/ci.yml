@@ -1,0 +1,50 @@
+name: Engram CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  kernel-and-build:
+    name: Build & Test (Linux amd64)
+    # We must use ubuntu-22.04 or newer to guarantee Linux kernel >= 5.11
+    # which is strictly required for UFFD_USER_MODE_ONLY.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Verify Runner Kernel Version
+        run: |
+          echo "Kernel Version:"
+          uname -r
+          echo "Ensure this is >= 5.11 for user-mode userfaultfd."
+
+      - name: Enforce Formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go code is not formatted. Run 'gofmt -w .'"
+            exit 1
+          fi
+
+      - name: Build All Binaries
+        # Compiles pagerd, shim, bench, and payload to ensure no syntax/linking errors
+        run: go build -v ./cmd/...
+
+      - name: Run Core Tests (with Race Detector)
+        # Executes tests in internal/ and pkg/
+        run: go test -v -race ./internal/... ./pkg/...
+
+      - name: Zero-Allocation Benchmark Check
+        # Runs benchmarks and tracks memory allocations to ensure the UFFD
+        # hot path generates exactly 0 bytes of heap garbage.
+        run: go test -run=^$ -bench=. -benchmem ./internal/uffd/...
